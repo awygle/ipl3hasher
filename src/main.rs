@@ -103,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // then, run the DeviceFnMut
     let c = compile::<GlslKernel, GlslKernelCompile, Vec<u32>, GlobalCache>(
         GlslKernel::new()
+            .spawn(256)
             .param::<[u32], _>("uint[16] state_in")
             .param_mut::<u32, _>("uint x_offset")
             .param_mut::<u32, _>("uint y_offset")
@@ -285,9 +286,9 @@ r#"
         let state_in: DeviceBox<[u32]> = state_vec.as_device_boxed()?;
         let start = Instant::now();
         loop {
-            stdout.write_fmt(format_args!("should calc from ({}, {}) to ({}, {}) on {} threads\n", x_off_src, y_off_src, x_off_src + opts.span as u64, y_off_src, opts.threads))?;
+            //stdout.write_fmt(format_args!("should calc from ({}, {}) to ({}, {}) on {} threads\n", x_off_src, y_off_src, x_off_src + opts.span as u64, y_off_src, opts.threads))?;
             unsafe {
-                spawn(opts.threads).launch(call!(c.clone(), &state_in, &mut x_off, &mut y_off, &mut finished, &mut res))?;
+                spawn(1).launch(call!(c.clone(), &state_in, &mut x_off, &mut y_off, &mut finished, &mut res))?;
             }
     
             finished_src = futures::executor::block_on(finished.get())?[0] == 1;
