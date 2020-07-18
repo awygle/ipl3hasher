@@ -31,12 +31,12 @@ struct CSumOptions {
     seed: u16,
     #[options(free, help = "The ROM to be modified")]
     source: String,
-    #[options(free, help = "The number of iterations to run before giving up. Defaults to no limit.")]
-    iterations: Option<usize>,
-    #[options(default = "2000", help = "The number of threads to use in X", parse(try_from_str = "parse_hex_u32"))]
-    x_threads: u32,
-    #[options(default = "200", help = "The span to cover in each execution, in X", parse(try_from_str = "parse_hex_u32"))]
-    x_span: u32,
+    #[options(default = "2000", help = "The number of threads to use", parse(try_from_str = "parse_hex_u32"))]
+    threads: u32,
+    #[options(default = "1000000", help = "The span to cover in each execution", parse(try_from_str = "parse_hex_u32"))]
+    span: u32,
+    #[options(default = "0", help = "The Y coordinate to start with")]
+    init: u32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //let mut state: DeviceBox<[u32]> = vec![0; 16].as_device_boxed_mut()?;
     let mut res: DeviceBox<[u32]> = vec![0u32, 0u32].as_device_boxed_mut()?;
     let mut x_off_src = 0u64;
-    let mut y_off_src = 0u64;
+    let mut y_off_src = opts.init as u64;
     let mut x_off: DeviceBox<u32> = 0u32.into_device_boxed_mut()?;
     let mut y_off: DeviceBox<u32> = 0u32.into_device_boxed_mut()?;
     let mut finished: DeviceBox<[u32]> = vec![0u32].as_device_boxed_mut()?;
@@ -112,8 +112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_const("uint magic", "0x95DACFDC")
             .with_const("uint target_hi", format!("{}", target_high))
             .with_const("uint target_lo", format!("{}", target_low))
-            .with_const("uint x_threads", format!("{}", opts.x_threads))
-            .with_const("uint x_span", format!("{}", opts.x_span))
+            .with_const("uint x_threads", format!("{}", opts.threads))
+            .with_const("uint x_span", format!("{}", opts.span))
             .with_const("uint seed", format!("{}", opts.seed as u32))
     .with_helper_code(r#"
     uint csum(uint op1, uint op2, uint op3) {
@@ -285,9 +285,9 @@ r#"
         let state_in: DeviceBox<[u32]> = state_vec.as_device_boxed()?;
         let start = Instant::now();
         loop {
-            stdout.write_fmt(format_args!("should calc from ({}, {}) to ({}, {}) on {} threads\n", x_off_src, y_off_src, x_off_src + opts.x_span as u64, y_off_src, opts.x_threads))?;
+            stdout.write_fmt(format_args!("should calc from ({}, {}) to ({}, {}) on {} threads\n", x_off_src, y_off_src, x_off_src + opts.span as u64, y_off_src, opts.threads))?;
             unsafe {
-                spawn(opts.x_threads).launch(call!(c.clone(), &state_in, &mut x_off, &mut y_off, &mut finished, &mut res))?;
+                spawn(opts.threads).launch(call!(c.clone(), &state_in, &mut x_off, &mut y_off, &mut finished, &mut res))?;
             }
     
             finished_src = futures::executor::block_on(finished.get())?[0] == 1;
@@ -295,7 +295,7 @@ r#"
                 break;
             }
 
-            x_off_src += opts.x_span as u64;
+            x_off_src += opts.span as u64;
 
             if x_off_src >= std::u32::MAX as u64 {
                 break;
