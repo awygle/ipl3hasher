@@ -17,3 +17,11 @@ gumdrop = "0.8.0"
 byteorder = "1.3"
 rand = "0.7.3"
 rayon = "1.3"
+
+[[bin]]
+name = "gpu3hasher"
+path = "src/main.rs"
+
+[[bin]]
+name = "cpu3hasher"
+path = "src/cpu.rs"

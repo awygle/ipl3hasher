@@ -5,7 +5,6 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian, ReadBytesExt};
 use std::io::Read;
 use std::fs::File;
 use rand::Rng;
-use rayon::prelude::*;
 use std::io::prelude::*;
 
 use std::time::{Duration, Instant};
@@ -271,7 +270,8 @@ r#"
 )?.finish()?;
 
     let mut finished_src;
-    let mut stdout = std::io::stdout();
+    let unlocked = std::io::stdout();
+    let mut stdout = unlocked.lock();
     loop {
         x_off_src = 0;
         x_off.set(x_off_src as u32)?;

@@ -213,3 +213,104 @@ impl<E: ByteOrder> ChecksumInfo<E> {
         self.high = (checksum >> 32) as u32;
     }
 }
+
+use gumdrop::Options;
+use rayon::prelude::*;
+use std::fs::File;
+use std::time::{Duration, Instant};
+use std::io::prelude::*;
+
+fn parse_hex(s: &str) -> Result<u16, std::num::ParseIntError> {
+    u16::from_str_radix(s, 16)
+}
+
+#[derive(Debug, Options)]
+struct CSumOptions {
+    #[options(free, required, help = "The ROM whose checksum must be matched")]
+    golden: String,
+    #[options(free, required, help = "The seed value for the hash", parse(try_from_str = "parse_hex"))]
+    seed: u16,
+    #[options(free, help = "The ROM to be modified")]
+    source: String,
+    #[options(default = "0", help = "The Y coordinate to start with")]
+    init: u32,
+}
+
+fn main() {
+    let opts = CSumOptions::parse_args_default_or_exit();
+    let target_high;
+    let target_low;
+    if let Ok(mut file) = File::open(opts.golden) {
+        let mut rom: [u8; 4096] = [0; 4096];
+        if let Ok(_) = file.read_exact(&mut rom) {
+            //println!("First byte is {:#X}", rom[0x40]);
+            let mut target_csum: ChecksumInfo<BigEndian> = ChecksumInfo::new(opts.seed as u32, rom);
+
+            target_csum.checksum(0, 1008);
+            target_csum.finalize_checksum();
+
+            println!("Target checksum: {:#06X} {:08X}", target_csum.high, target_csum.low);
+            target_high = target_csum.high;
+            target_low = target_csum.low;
+        }
+        else {
+            panic!();
+        }
+    }
+    else {
+        panic!();
+    }
+
+    if let Ok(mut file) = File::open(opts.source) {
+        let mut rom: [u8; 4096] = [0; 4096];
+        if let Ok(_) = file.read_exact(&mut rom) {
+            let mut pre_csum: ChecksumInfo<BigEndian> = ChecksumInfo::new(opts.seed as u32, rom);
+
+            pre_csum.checksum(0, 1005);
+
+            let unlocked = std::io::stdout();
+            let mut stdout = unlocked.lock();
+            for y in opts.init..=u32::MAX {
+                let mut y_csum = pre_csum.clone();
+                y_csum.rom[4088] = (y >> 24) as u8;
+                y_csum.rom[4089] = (y >> 16) as u8;
+                y_csum.rom[4090] = (y >> 8) as u8;
+                y_csum.rom[4091] = (y >> 0) as u8;
+
+                y_csum.checksum(1005, 1006);
+                
+                stdout.write_fmt(format_args!("executing y == {}\n", y));
+
+                let start = Instant::now();
+                let success_val = (0..=u32::MAX).into_par_iter().find_any(|x| {
+                    let mut csum = y_csum.clone();
+                    csum.rom[4092] = (x >> 24) as u8;
+                    csum.rom[4093] = (x >> 16) as u8;
+                    csum.rom[4094] = (x >> 8) as u8;
+                    csum.rom[4095] = (x >> 0) as u8;
+                    csum.checksum(1006, 1008);
+                    csum.finalize_checksum();
+
+                    if csum.high == target_high && csum.low == target_low {
+                        println!("Result checksum: {:#06X} {:08X}", csum.high, csum.low);
+                        println!("Success found with final two words of {:#X}, {:#X}",
+                                 y, x);
+                        return true;
+                    }
+                    else {
+                        false
+                    }
+                });
+
+                if success_val.is_some() {
+                    return;
+                }
+
+                let duration = start.elapsed();
+                stdout.write_fmt(format_args!("Inner loop took {:?}\n", duration));
+            }
+
+            println!("Exhaustively tested all u64 values and failed! How did you wait this long?");
+        }
+    }
+}
