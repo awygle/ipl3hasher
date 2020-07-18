@@ -1,11 +1,11 @@
 use emu_core::prelude::*;
 use emu_glsl::*;
 //use zerocopy::*;
-use byteorder::{ByteOrder, BigEndian, LittleEndian, ReadBytesExt};
-use std::io::Read;
-use std::fs::File;
+use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt};
 use rand::Rng;
+use std::fs::File;
 use std::io::prelude::*;
+use std::io::Read;
 
 use std::time::{Duration, Instant};
 
@@ -26,20 +26,38 @@ fn parse_hex_u32(s: &str) -> Result<u32, std::num::ParseIntError> {
 struct CSumOptions {
     #[options(free, required, help = "The ROM whose checksum must be matched")]
     golden: String,
-    #[options(free, required, help = "The seed value for the hash", parse(try_from_str = "parse_hex"))]
+    #[options(
+        free,
+        required,
+        help = "The seed value for the hash",
+        parse(try_from_str = "parse_hex")
+    )]
     seed: u16,
     #[options(free, help = "The ROM to be modified")]
     source: String,
-    #[options(default = "2000", help = "The number of threads to use", parse(try_from_str = "parse_hex_u32"))]
+    #[options(
+        default = "400",
+        help = "The number of threads to use",
+        parse(try_from_str = "parse_hex_u32")
+    )]
     threads: u32,
-    #[options(default = "1000000", help = "The span to cover in each execution", parse(try_from_str = "parse_hex_u32"))]
-    span: u32,
+    #[options(
+        default = "20000",
+        help = "The number of groups to use",
+        parse(try_from_str = "parse_hex_u32")
+    )]
+    groups: u32,
     #[options(default = "0", help = "The Y coordinate to start with")]
     init: u32,
+    #[options(
+        short = "v",
+        default = "false",
+        help = "Print each range of hashes as they're sent to the GPU"
+    )]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    
     let opts = CSumOptions::parse_args_default_or_exit();
     let target_high;
     let target_low;
@@ -47,18 +65,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rom: [u8; 4096] = [0; 4096];
         if let Ok(_) = file.read_exact(&mut rom) {
             let mut target_csum: ChecksumInfo<BigEndian> = ChecksumInfo::new(opts.seed as u32, rom);
-            
             target_csum.checksum(0, 1008);
             target_csum.finalize_checksum();
-            
             target_high = target_csum.high;
             target_low = target_csum.low;
-        }
-        else {
+        } else {
             panic!();
         }
-    }
-    else {
+    } else {
         panic!();
     }
 
@@ -70,14 +84,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rom: [u8; 4096] = [0; 4096];
         if let Ok(_) = file.read_exact(&mut rom) {
             pre_csum = ChecksumInfo::new(opts.seed as u32, rom);
-            
             pre_csum.checksum(0, 1005);
-        }
-        else {
+        } else {
             panic!();
         }
-    }
-    else {
+    } else {
         panic!();
     }
 
@@ -101,36 +112,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // compile GslKernel to SPIR-V
     // then, we can either inspect the SPIR-V or finish the compilation by generating a DeviceFnMut
     // then, run the DeviceFnMut
-    let c = compile::<GlslKernel, GlslKernelCompile, Vec<u32>, GlobalCache>(
-        GlslKernel::new()
-            .spawn(256)
-            .param::<[u32], _>("uint[16] state_in")
-            .param_mut::<u32, _>("uint x_offset")
-            .param_mut::<u32, _>("uint y_offset")
-            .param_mut::<[u32], _>("uint[1] finished")
-            .param_mut::<[u32], _>("uint[2] result")
-            .with_const("uint magic", "0x95DACFDC")
-            .with_const("uint target_hi", format!("{}", target_high))
-            .with_const("uint target_lo", format!("{}", target_low))
-            .with_const("uint x_threads", format!("{}", opts.threads))
-            .with_const("uint x_span", format!("{}", opts.span))
-            .with_const("uint seed", format!("{}", opts.seed as u32))
-    .with_helper_code(r#"
-    uint csum(uint op1, uint op2, uint op3) {
-        uint hi;
-        uint lo;
-        if (op2 == 0) {
-            op2 = op3;
-        }
-    
-        umulExtended(op1, op2, hi, lo);
-        
-        if (hi - lo == 0) {
-            return lo;
-        }
-    
-        return hi - lo;
+    let kernel = GlslKernel::new()
+    .spawn(opts.threads)
+    .param::<[u32], _>("uint[16] state_in")
+    .param_mut::<u32, _>("uint x_offset")
+    .param_mut::<u32, _>("uint y_offset")
+    .param_mut::<[u32], _>("uint[1] finished")
+    .param_mut::<[u32], _>("uint[2] result")
+    .with_const("uint magic", "0x95DACFDC")
+    .with_const("uint target_hi", format!("{}", target_high))
+    .with_const("uint target_lo", format!("{}", target_low))
+    .with_const("uint seed", format!("{}", opts.seed as u32))
+.with_helper_code(r#"
+uint csum(uint op1, uint op2, uint op3) {
+    uint hi;
+    uint lo;
+    if (op2 == 0) {
+        op2 = op3;
     }
+
+    umulExtended(op1, op2, hi, lo);
+
+    if (hi - lo == 0) {
+        return lo;
+    }
+
+    return hi - lo;
+}
 
 uint[16] round(uint[16] state, uint data_last, uint data, uint data_next, uint loop_count) {
     state[0] += csum(uint(0x3EF - loop_count), data, loop_count);
@@ -244,32 +252,22 @@ uint[2] crunch(uint[16] state_in, uint hi, uint lo) {
 
     return finalize(state);
 }
-    "#)
-    .with_kernel_code(
+"#)
+.with_kernel_code(
 r#"
     uint y = y_offset;
-        uint x = x_offset + gl_GlobalInvocationID.x;
-        for (;;) {
-            uint local_result[2] = crunch(state_in, y, x);
-            if (local_result[1] == target_hi && local_result[0] == target_lo) {
-                if (atomicOr(finished[0], 1) == 0) {
-                    result[0] = x;
-                    result[1] = y;
-                }
-            }
-
-            if (finished[0] == 1) break;
-
-            uint carry;
-            x = uaddCarry(x, x_threads, carry);
-
-            if (carry != 0) break;
-            if (x >= x_offset + x_span) break;
+    uint x = x_offset + gl_GlobalInvocationID.x;
+    uint local_result[2] = crunch(state_in, y, x);
+    if (local_result[1] == target_hi && local_result[0] == target_lo) {
+        if (atomicOr(finished[0], 1) == 0) {
+            result[0] = x;
+            result[1] = y;
         }
+    }
 "#,
-    ),
-)?.finish()?;
-
+);
+    let c = compile::<GlslKernel, GlslKernelCompile, Vec<u32>, GlobalCache>(kernel)?.finish()?;
+    //return Ok(());
     let mut finished_src;
     let unlocked = std::io::stdout();
     let mut stdout = unlocked.lock();
@@ -286,17 +284,34 @@ r#"
         let state_in: DeviceBox<[u32]> = state_vec.as_device_boxed()?;
         let start = Instant::now();
         loop {
-            //stdout.write_fmt(format_args!("should calc from ({}, {}) to ({}, {}) on {} threads\n", x_off_src, y_off_src, x_off_src + opts.span as u64, y_off_src, opts.threads))?;
-            unsafe {
-                spawn(1).launch(call!(c.clone(), &state_in, &mut x_off, &mut y_off, &mut finished, &mut res))?;
+            let bump = (opts.threads as u64) * (opts.groups as u64);
+            if opts.verbose {
+                stdout.write_fmt(format_args!(
+                    "should calc from ({}, {}) to ({}, {}) in {} threads on {} workgroups\n",
+                    x_off_src,
+                    y_off_src,
+                    x_off_src + bump,
+                    y_off_src,
+                    opts.threads,
+                    opts.groups
+                ))?;
             }
-    
+            unsafe {
+                spawn(opts.groups).launch(call!(
+                    c.clone(),
+                    &state_in,
+                    &mut x_off,
+                    &mut y_off,
+                    &mut finished,
+                    &mut res
+                ))?;
+            }
             finished_src = futures::executor::block_on(finished.get())?[0] == 1;
-            if  finished_src {
+            if finished_src {
                 break;
             }
 
-            x_off_src += opts.span as u64;
+            x_off_src += bump;
 
             if x_off_src >= std::u32::MAX as u64 {
                 break;
@@ -305,10 +320,11 @@ r#"
             x_off.set(x_off_src as u32)?;
         }
         let duration = start.elapsed();
-        write!(stdout, "Inner loop took {:?}\n", duration)?;
+        write!(stdout, "Inner loop Y=={} took {:?}\n", y_off_src, duration)?;
         stdout.flush()?;
+        //return Ok(());
 
-        if  finished_src {
+        if finished_src {
             break;
         }
 
@@ -324,8 +340,7 @@ r#"
     // download from GPU and print out
     if finished_src {
         println!("{:#X?}", futures::executor::block_on(res.get())?);
-    }
-    else {
+    } else {
         println!("sorry, no dice");
     }
     Ok(())
