@@ -270,7 +270,7 @@ fn main() {
 
             let unlocked = std::io::stdout();
             let mut stdout = unlocked.lock();
-            for y in opts.init..=u32::MAX {
+            for y in opts.init..=std::u32::MAX {
                 let mut y_csum = pre_csum.clone();
                 y_csum.rom[4088] = (y >> 24) as u8;
                 y_csum.rom[4089] = (y >> 16) as u8;
@@ -282,7 +282,7 @@ fn main() {
                 stdout.write_fmt(format_args!("executing y == {}\n", y));
 
                 let start = Instant::now();
-                let success_val = (0..=u32::MAX).into_par_iter().find_any(|x| {
+                let success_val = (0..=std::u32::MAX).into_par_iter().find_any(|x| {
                     let mut csum = y_csum.clone();
                     csum.rom[4092] = (x >> 24) as u8;
                     csum.rom[4093] = (x >> 16) as u8;

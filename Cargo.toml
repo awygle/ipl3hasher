@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-emu_core = { version = "0.1.1", features = ["glsl-compile"] }
+emu_core = { path="emu/emu_core", features = ["glsl-compile"] }
 emu_glsl = "0.1.0"
 zerocopy = "0.2.0"
 futures = "0.3.1"
